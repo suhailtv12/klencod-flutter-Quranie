@@ -1,35 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- صلاحيات الإنترنت والشبكة (ضرورية لجلب التلاوات وصور المصحف) -->
+    <!-- 1. صلاحيات الإنترنت والشبكة (ضرورية لجلب السور، التلاوات، وصور المصحف) -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
-    <!-- صلاحيات تشغيل الصوت في الخلفية وشاشة القفل بدون انقطاع -->
+    <!-- 2. صلاحيات الموقع الجغرافي (تُطلب وقت التشغيل لحساب مواقيت الصلاة) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+
+    <!-- 3. صلاحيات استمرار التلاوة في الخلفية وعند قفل الشاشة -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
 
-    <!-- صلاحيات الموقع الجغرافي لحساب مواقيت الصلاة بدقة لموقعك الحالي -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-
-    <!-- صلاحيات التخزين والذاكرة من ملفك الأصلي -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-
-    <!-- صلاحية الاهتزاز التفاعلي للسبحة الإلكترونية -->
-    <uses-permission android:name="android.permission.VIBRATE"/>
-
-    <!-- صلاحية الإشعارات للأجهزة الحديثة -->
+    <!-- 4. صلاحيات الإشعارات لأجهزة أندرويد 13 فما فوق -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- 5. صلاحية الاهتزاز عند النقر على السبحة الإلكترونية -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
+
+    <!-- 6. صلاحيات التخزين للهواتف ذات الإصدارات القديمة -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+
     <application
-        android:requestLegacyExternalStorage="true"
-        android:usesCleartextTraffic="true"
-        android:label="Quranie"
+        android:label="قرآني"
+        android:name="${applicationName}"
         android:icon="@drawable/ic_launcher"
-        android:theme="@style/NormalTheme">
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true">
 
         <activity
             android:name=".MainActivity"
@@ -38,6 +38,7 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
+            
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -49,7 +50,7 @@
             android:value="2"/>
     </application>
 
-    <!-- لدعم مشاركة الآيات عبر التطبيقات الأخرى مثل واتساب وتيليجرام -->
+    <!-- دعم مشاركة الآيات مع التطبيقات الخارجية (واتساب، تيليجرام...) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.SEND" />
