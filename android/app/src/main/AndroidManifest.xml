@@ -1,14 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- صلاحيات الإنترنت والشبكة (ضرورية لجلب التلاوات وصور المصحف) -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!-- صلاحيات تشغيل الصوت في الخلفية وشاشة القفل بدون انقطاع -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+
+    <!-- صلاحيات الموقع الجغرافي لحساب مواقيت الصلاة بدقة لموقعك الحالي -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+
+    <!-- صلاحيات التخزين والذاكرة من ملفك الأصلي -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
 
+    <!-- صلاحية الاهتزاز التفاعلي للسبحة الإلكترونية -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
+
+    <!-- صلاحية الإشعارات للأجهزة الحديثة -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
         android:requestLegacyExternalStorage="true"
+        android:usesCleartextTraffic="true"
         android:label="Quranie"
         android:icon="@drawable/ic_launcher"
         android:theme="@style/NormalTheme">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -21,8 +43,18 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
     </application>
+
+    <!-- لدعم مشاركة الآيات عبر التطبيقات الأخرى مثل واتساب وتيليجرام -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
 </manifest>
