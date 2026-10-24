@@ -1,35 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 1. صلاحيات الإنترنت والشبكة (ضرورية لجلب السور، التلاوات، وصور المصحف) -->
+    <!-- صلاحيات الإنترنت والشبكة -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
-    <!-- 2. صلاحيات الموقع الجغرافي (تُطلب وقت التشغيل لحساب مواقيت الصلاة) -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-
-    <!-- 3. صلاحيات استمرار التلاوة في الخلفية وعند قفل الشاشة -->
+    <!-- صلاحيات مشغل شاشة القفل والخلفية -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
 
-    <!-- 4. صلاحيات الإشعارات لأجهزة أندرويد 13 فما فوق -->
+    <!-- صلاحيات إشعارات الصلاة والجدولة الدقيقة -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-
-    <!-- 5. صلاحية الاهتزاز عند النقر على السبحة الإلكترونية -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
 
-    <!-- 6. صلاحيات التخزين للهواتف ذات الإصدارات القديمة -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- صلاحيات الموقع الجغرافي للمواقيت -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 
     <application
         android:label="قرآني"
         android:name="${applicationName}"
         android:icon="@drawable/ic_launcher"
-        android:usesCleartextTraffic="true"
-        android:requestLegacyExternalStorage="true">
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"
@@ -45,17 +41,40 @@
             </intent-filter>
         </activity>
 
+        <!-- خدمة تشغيل الصوت والتحكم بشاشة القفل (just_audio_background) -->
+        <service android:name="com.ryanheise.just_audio_background.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <receiver android:name="com.ryanheise.just_audio_background.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- مستقبل إعادة جدولة إشعارات الصلاة عند إعادة تشغيل الهاتف -->
+        <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
     </application>
 
-    <!-- دعم مشاركة الآيات مع التطبيقات الخارجية (واتساب، تيليجرام...) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="text/plain" />
         </intent>
     </queries>
-
 </manifest>

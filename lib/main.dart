@@ -5,22 +5,129 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:adhan/adhan.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.qurani.audio.channel',
+      androidNotificationChannelName: 'تلاوات قرآني',
+      androidNotificationOngoing: true,
+      androidNotificationIcon: 'drawable/ic_launcher',
+    );
+  } catch (e) {
+    debugPrint("Note: JustAudioBackground Init: $e");
+  }
+
+  await AppNotificationService.init();
+
   final prefs = await SharedPreferences.getInstance();
-  runApp(QuraniUltimateApp(prefs: prefs));
+  runApp(QuraniUltimateMasterApp(prefs: prefs));
 }
 
 // ============================================================================
-// 1. نماذج البيانات (Models)
+// 1. خدمة الإشعارات وتذكيرات الأذكار والصلوات
+// ============================================================================
+class AppNotificationService {
+  static final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+
+  static Future<void> init() async {
+    try {
+      tz.initializeTimeZones();
+      const androidSettings = AndroidInitializationSettings('@drawable/ic_launcher');
+      const initSettings = InitializationSettings(android: androidSettings);
+      await _notifications.initialize(initSettings);
+      await _scheduleDailyReminders();
+    } catch (e) {
+      debugPrint("Notifications init note: $e");
+    }
+  }
+
+  static Future<void> _scheduleDailyReminders() async {
+    await _scheduleDaily(101, 'أذكار الصباح المباركة ☀️', 'ابدأ يومك بذكر الله: أصبحنا وأصبح الملك لله..', 7, 0);
+    await _scheduleDaily(102, 'أذكار المساء وحصن المسلم 🌙', 'أمسينا وأمسى الملك لله والحمد لله.. حصّن نفسك بذكر الله.', 17, 0);
+  }
+
+  static Future<void> _scheduleDaily(int id, String title, String body, int hour, int minute) async {
+    try {
+      var now = tz.TZDateTime.now(tz.local);
+      var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+      if (scheduled.isBefore(now)) scheduled = scheduled.add(const Duration(days: 1));
+
+      const details = AndroidNotificationDetails(
+        'qurani_reminders_channel',
+        'تذكيرات الأذكار',
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+
+      await _notifications.zonedSchedule(
+        id,
+        title,
+        body,
+        scheduled,
+        const NotificationDetails(android: details),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+    } catch (_) {}
+  }
+
+  static Future<void> schedulePrayerTimes(PrayerTimes prayerTimes) async {
+    try {
+      final list = {
+        1: {'name': 'صلاة الفجر', 'time': prayerTimes.fajr},
+        2: {'name': 'صلاة الظهر', 'time': prayerTimes.dhuhr},
+        3: {'name': 'صلاة العصر', 'time': prayerTimes.asr},
+        4: {'name': 'صلاة المغرب', 'time': prayerTimes.maghrib},
+        5: {'name': 'صلاة العشاء', 'time': prayerTimes.isha},
+      };
+
+      for (var entry in list.entries) {
+        final name = entry.value['name'] as String;
+        final time = entry.value['time'] as DateTime;
+        var scheduled = tz.TZDateTime.from(time, tz.local);
+        if (scheduled.isBefore(tz.TZDateTime.now(tz.local))) {
+          scheduled = scheduled.add(const Duration(days: 1));
+        }
+
+        const details = AndroidNotificationDetails(
+          'prayer_channel',
+          'مواقيت الأذان',
+          importance: Importance.max,
+          priority: Priority.high,
+        );
+
+        await _notifications.zonedSchedule(
+          entry.key,
+          'حان الآن موعد $name',
+          'حي على الصلاة.. حي على الفلاح',
+          scheduled,
+          const NotificationDetails(android: details),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: DateTimeComponents.time,
+        );
+      }
+    } catch (_) {}
+  }
+}
+
+// ============================================================================
+// 2. نماذج البيانات (Models)
 // ============================================================================
 class SurahData {
   final int number;
@@ -77,8 +184,53 @@ class DownloadedAudio {
   );
 }
 
+class HifzPlan {
+  final String id;
+  final String title;
+  final int targetPages;
+  int completedPages;
+  final int dailyPages;
+  final String startDate;
+
+  HifzPlan({
+    required this.id,
+    required this.title,
+    required this.targetPages,
+    required this.completedPages,
+    required this.dailyPages,
+    required this.startDate,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'title': title,
+    'targetPages': targetPages,
+    'completedPages': completedPages,
+    'dailyPages': dailyPages,
+    'startDate': startDate,
+  };
+
+  factory HifzPlan.fromMap(Map<String, dynamic> map) => HifzPlan(
+    id: map['id'],
+    title: map['title'],
+    targetPages: map['targetPages'],
+    completedPages: map['completedPages'],
+    dailyPages: map['dailyPages'],
+    startDate: map['startDate'],
+  );
+}
+
+class ZikrItem {
+  final String text;
+  final String count;
+  final String reward;
+  int current;
+
+  ZikrItem({required this.text, required this.count, required this.reward, this.current = 0});
+}
+
 // ============================================================================
-// 2. محرك التطبيق وإدارة الحالة دون أي تعليق (Non-blocking Engine)
+// 3. محرك التطبيق وإدارة الحالة العامة
 // ============================================================================
 class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
   final SharedPreferences prefs;
@@ -87,7 +239,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
   bool isDark = false;
   double fontSize = 24.0;
 
-  // مشغل الصوت
   int currentReciterIndex = 0;
   int currentSurahIndex = 0;
   bool isAudioBuffering = false;
@@ -96,52 +247,54 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
   String currentPlayingTitle = "";
   bool isPlayingOffline = false;
 
-  // مواقيت الصلاة والمؤقت
   PrayerTimes? prayerTimes;
   String nextPrayer = "الفجر";
   Duration remainingTime = Duration.zero;
   Timer? ticker;
 
-  // السبحة
-  int tasbihCount = 0;
-  int tasbihTarget = 33;
-  String selectedZikr = "سُبْحَانَ اللَّهِ";
-  List<String> azkarList = [
-    "سُبْحَانَ اللَّهِ",
-    "الْحَمْدُ لِلَّهِ",
-    "لَا إِلَهَ إِلَّا اللَّهُ",
-    "اللَّهُ أَكْبَرُ",
-    "أَسْتَغْفِرُ اللَّهَ وَأَتُوبُ إِلَيْهِ",
-    "اللَّهُمَّ صَلِّ عَلَى سَيِّدِنَا مُحَمَّدٍ",
-  ];
-
-  // التحميلات والمفضلة
   List<DownloadedAudio> downloadedList = [];
   Map<int, double> downloadProgress = {};
+  List<HifzPlan> hifzPlans = [];
+  List<int> bookmarkedSurahs = [];
 
   AppEngine(this.prefs) {
     WidgetsBinding.instance.addObserver(this);
-    _loadLocalSettings();
-    _setupAudioStreams();
-    _initFastPrayerTimes();
-    _startCountdown();
+    _loadPreferences();
+    _setupAudio();
+    _initPrayerTimesFast();
+    _startLiveTimer();
   }
 
-  void _loadLocalSettings() {
+  void _loadPreferences() {
     isDark = prefs.getBool('isDark') ?? false;
     fontSize = prefs.getDouble('fontSize') ?? 24.0;
-    tasbihCount = prefs.getInt('tasbihCount') ?? 0;
-    final custom = prefs.getStringList('azkarList');
-    if (custom != null && custom.isNotEmpty) azkarList = custom;
+
+    final bList = prefs.getStringList('bookmarks');
+    if (bList != null) bookmarkedSurahs = bList.map((e) => int.parse(e)).toList();
 
     final dStr = prefs.getString('downloaded_audios');
     if (dStr != null) {
       final List dec = jsonDecode(dStr);
       downloadedList = dec.map((e) => DownloadedAudio.fromMap(e)).toList();
     }
+
+    final pStr = prefs.getString('hifz_plans_list');
+    if (pStr != null) {
+      final List dec = jsonDecode(pStr);
+      hifzPlans = dec.map((e) => HifzPlan.fromMap(e)).toList();
+    } else {
+      hifzPlans.add(HifzPlan(
+        id: '1',
+        title: 'خطة حفظ جزء عمّ المبارك',
+        targetPages: 23,
+        completedPages: 5,
+        dailyPages: 1,
+        startDate: 'اليوم',
+      ));
+    }
   }
 
-  void _setupAudioStreams() {
+  void _setupAudio() {
     player.durationStream.listen((d) {
       duration = d ?? Duration.zero;
       notifyListeners();
@@ -160,73 +313,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  // --- كود فحص وطلب إذن الموقع الجغرافي التفاعلي المدمج هنا ---
-  Future<void> requestAppPermissions(BuildContext context) async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('يرجى تفعيل الـ GPS لتحديد مواقيت الصلاة بدقة لموقعك الحالي'),
-              backgroundColor: Color(0xFF0A4D3C),
-            ),
-          );
-        }
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('تم رفض الإذن، سيتم اعتماد توقيت مكة المكرمة كافتراضي.')),
-            );
-          }
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('تم رفض الإذن نهائياً، يرجى تفعيله من إعدادات الهاتف.'),
-              action: SnackBarAction(
-                label: 'الإعدادات',
-                textColor: const Color(0xFFC5A059),
-                onPressed: () => Geolocator.openAppSettings(),
-              ),
-            ),
-          );
-        }
-        return;
-      }
-
-      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-        Position pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.low,
-          timeLimit: const Duration(seconds: 4),
-        );
-        _calculateTimes(Coordinates(pos.latitude, pos.longitude));
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('تم تحديد موقعك بنجاح وتحديث مواقيت الصلاة!'),
-              backgroundColor: Color(0xFF0A4D3C),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint("خطأ أثناء طلب الصلاحيات: $e");
-    }
-  }
-
-  // --- تشغيل الصوت أوفلاين أو أونلاين ---
   Future<void> playSurah(int surahIdx, {int? reciterIdx, bool forceOnline = false}) async {
     if (reciterIdx != null) currentReciterIndex = reciterIdx;
     currentSurahIndex = surahIdx;
@@ -243,34 +329,29 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       await player.stop();
+      final mediaItem = MediaItem(
+        id: '${surah.number}_${reciter.id}',
+        album: 'القرآن الكريم',
+        title: surah.name,
+        artist: reciter.name,
+        artUri: Uri.parse("https://raw.githubusercontent.com/Govar-Frman/Quran-Page-Images/main/pages/${surah.startPage.toString().padLeft(3, '0')}.png"),
+      );
+
       if (localMatch.surahNumber != -1 && File(localMatch.filePath).existsSync() && !forceOnline) {
         isPlayingOffline = true;
-        await player.setFilePath(localMatch.filePath);
+        await player.setAudioSource(AudioSource.file(localMatch.filePath, tag: mediaItem));
       } else {
         isPlayingOffline = false;
         final numPad = surah.number.toString().padLeft(3, '0');
         final remoteUrl = "${reciter.server}/$numPad.mp3";
-        await player.setUrl(remoteUrl);
+        await player.setAudioSource(AudioSource.uri(Uri.parse(remoteUrl), tag: mediaItem));
       }
       player.play();
     } catch (e) {
-      debugPrint("Audio Error: $e");
+      debugPrint("Audio Play Error: $e");
     } finally {
       isAudioBuffering = false;
       notifyListeners();
-    }
-  }
-
-  Future<void> playDownloadedFile(DownloadedAudio item) async {
-    try {
-      await player.stop();
-      currentPlayingTitle = "${item.surahName} (${item.reciterName}) - بدون إنترنت";
-      isPlayingOffline = true;
-      notifyListeners();
-      await player.setFilePath(item.filePath);
-      player.play();
-    } catch (e) {
-      debugPrint("File playback error: $e");
     }
   }
 
@@ -299,11 +380,9 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  // --- تحميل السورة الصوتية إلى ذاكرة الهاتف أوفلاين ---
   Future<void> downloadSurahAudio(SurahData surah, ReciterData reciter) async {
     final numPad = surah.number.toString().padLeft(3, '0');
     final remoteUrl = "${reciter.server}/$numPad.mp3";
-
     downloadProgress[surah.number] = 0.05;
     notifyListeners();
 
@@ -312,22 +391,20 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
       final savePath = "${dir.path}/surah_${reciter.id}_$numPad.mp3";
       final file = File(savePath);
 
-      if (file.existsSync()) {
-        file.deleteSync();
-      }
+      if (file.existsSync()) file.deleteSync();
 
       final client = http.Client();
       final request = http.Request('GET', Uri.parse(remoteUrl));
       final response = await client.send(request);
 
-      final totalBytes = response.contentLength ?? 1;
-      int receivedBytes = 0;
+      final total = response.contentLength ?? 1;
+      int received = 0;
       final sink = file.openWrite();
 
       await response.stream.listen((chunk) {
         sink.add(chunk);
-        receivedBytes += chunk.length;
-        downloadProgress[surah.number] = (receivedBytes / totalBytes).clamp(0.0, 1.0);
+        received += chunk.length;
+        downloadProgress[surah.number] = (received / total).clamp(0.0, 1.0);
         notifyListeners();
       }).asFuture();
 
@@ -343,41 +420,85 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
 
       prefs.setString('downloaded_audios', jsonEncode(downloadedList.map((e) => e.toMap()).toList()));
     } catch (e) {
-      debugPrint("Download failed: $e");
+      debugPrint("Download error: $e");
     } finally {
       downloadProgress.remove(surah.number);
       notifyListeners();
     }
   }
 
-  void deleteDownloadedAudio(DownloadedAudio item) {
-    try {
-      final f = File(item.filePath);
-      if (f.existsSync()) f.deleteSync();
-      downloadedList.remove(item);
-      prefs.setString('downloaded_audios', jsonEncode(downloadedList.map((e) => e.toMap()).toList()));
-      notifyListeners();
-    } catch (_) {}
-  }
-
   bool isSurahDownloaded(int surahNum, String reciterName) {
     return downloadedList.any((d) => d.surahNumber == surahNum && d.reciterName == reciterName);
   }
 
-  // --- حساب المواقيت المبدئية ---
-  void _initFastPrayerTimes() {
-    _calculateTimes(Coordinates(21.4225, 39.8262));
+  // --- خطط الحفظ ---
+  void createNewHifzPlan(String title, int targetPages, int daily) {
+    hifzPlans.add(HifzPlan(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      title: title,
+      targetPages: targetPages,
+      completedPages: 0,
+      dailyPages: daily,
+      startDate: "${DateTime.now().year}/${DateTime.now().month}/${DateTime.now().day}",
+    ));
+    _saveHifz();
   }
 
-  void _calculateTimes(Coordinates coords) {
-    final params = CalculationMethod.muslim_world_league.getParameters();
-    params.madhab = Madhab.shafi;
-    prayerTimes = PrayerTimes.today(coords, params);
-    _syncNextPrayer();
+  void incrementPlanProgress(String id, int pages) {
+    final idx = hifzPlans.indexWhere((p) => p.id == id);
+    if (idx != -1) {
+      hifzPlans[idx].completedPages = (hifzPlans[idx].completedPages + pages).clamp(0, hifzPlans[idx].targetPages);
+      _saveHifz();
+    }
+  }
+
+  void deleteHifzPlan(String id) {
+    hifzPlans.removeWhere((p) => p.id == id);
+    _saveHifz();
+  }
+
+  void _saveHifz() {
+    prefs.setString('hifz_plans_list', jsonEncode(hifzPlans.map((e) => e.toMap()).toList()));
     notifyListeners();
   }
 
-  void _syncNextPrayer() {
+  // --- مواقيت الصلاة والمؤقت الحي بدون تجمد ---
+  void _initPrayerTimesFast() {
+    _calculatePrayer(Coordinates(21.4225, 39.8262)); // مكة المكرمة فورياً
+  }
+
+  Future<void> requestAppPermissions(BuildContext context) async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
+
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+
+      if (perm == LocationPermission.whileInUse || perm == LocationPermission.always) {
+        Position pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.low,
+          timeLimit: const Duration(seconds: 4),
+        );
+        _calculatePrayer(Coordinates(pos.latitude, pos.longitude));
+      }
+    } catch (_) {}
+  }
+
+  void _calculatePrayer(Coordinates coords) {
+    final params = CalculationMethod.muslim_world_league.getParameters();
+    params.madhab = Madhab.shafi;
+    prayerTimes = PrayerTimes.today(coords, params);
+    _syncCountdown();
+    if (prayerTimes != null) {
+      AppNotificationService.schedulePrayerTimes(prayerTimes!);
+    }
+    notifyListeners();
+  }
+
+  void _syncCountdown() {
     if (prayerTimes == null) return;
     final next = prayerTimes!.nextPrayer();
     DateTime? nextTime;
@@ -419,38 +540,17 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _startCountdown() {
+  void _startLiveTimer() {
     ticker?.cancel();
     ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (prayerTimes != null) {
-        _syncNextPrayer();
+        _syncCountdown();
         notifyListeners();
       }
     });
   }
 
-  // --- السبحة ---
-  void hitTasbih() {
-    tasbihCount++;
-    prefs.setInt('tasbihCount', tasbihCount);
-    notifyListeners();
-  }
-
-  void resetTasbih() {
-    tasbihCount = 0;
-    prefs.setInt('tasbihCount', 0);
-    notifyListeners();
-  }
-
-  void addNewZikr(String text) {
-    if (text.trim().isNotEmpty && !azkarList.contains(text.trim())) {
-      azkarList.add(text.trim());
-      prefs.setStringList('azkarList', azkarList);
-      selectedZikr = text.trim();
-      resetTasbih();
-    }
-  }
-
+  // --- الإعدادات والمظهر ---
   void toggleTheme() {
     isDark = !isDark;
     prefs.setBool('isDark', isDark);
@@ -463,10 +563,20 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  void toggleBookmark(int num) {
+    if (bookmarkedSurahs.contains(num)) {
+      bookmarkedSurahs.remove(num);
+    } else {
+      bookmarkedSurahs.add(num);
+    }
+    prefs.setStringList('bookmarks', bookmarkedSurahs.map((e) => e.toString()).toList());
+    notifyListeners();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _syncNextPrayer();
+      _syncCountdown();
       notifyListeners();
     }
   }
@@ -483,11 +593,11 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
 late AppEngine appEngine;
 
 // ============================================================================
-// 3. الواجهة الرئيسية والتنقل
+// 4. التطبيق الرئيسي والهوية البصرية
 // ============================================================================
-class QuraniUltimateApp extends StatelessWidget {
+class QuraniUltimateMasterApp extends StatelessWidget {
   final SharedPreferences prefs;
-  const QuraniUltimateApp({super.key, required this.prefs});
+  const QuraniUltimateMasterApp({super.key, required this.prefs});
 
   @override
   Widget build(BuildContext context) {
@@ -519,27 +629,27 @@ class QuraniUltimateApp extends StatelessWidget {
             colorScheme: ColorScheme.fromSeed(seedColor: primaryColor, primary: goldColor, secondary: primaryColor, surface: const Color(0xFF15221E), brightness: Brightness.dark),
             textTheme: GoogleFonts.cairoTextTheme(ThemeData.dark().textTheme),
           ),
-          home: const Directionality(textDirection: TextDirection.rtl, child: RootNavScreen()),
+          home: const Directionality(textDirection: TextDirection.rtl, child: MainNavigationWrapper()),
         );
       },
     );
   }
 }
 
-class RootNavScreen extends StatefulWidget {
-  const RootNavScreen({super.key});
+class MainNavigationWrapper extends StatefulWidget {
+  const MainNavigationWrapper({super.key});
 
   @override
-  State<RootNavScreen> createState() => _RootNavScreenState();
+  State<MainNavigationWrapper> createState() => _MainNavigationWrapperState();
 }
 
-class _RootNavScreenState extends State<RootNavScreen> {
+class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   int _idx = 0;
   final List<Widget> _screens = const [
     HomeScreen(),
-    AudioScreen(),
-    DownloadsScreen(),
-    TasbihScreen(),
+    AudioStudioScreen(),
+    HifzPlansScreen(),
+    AzkarScreen(),
     SettingsScreen(),
   ];
 
@@ -556,8 +666,8 @@ class _RootNavScreenState extends State<RootNavScreen> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.menu_book_rounded), label: 'المصحف'),
           NavigationDestination(icon: Icon(Icons.headphones_rounded), label: 'التلاوات'),
-          NavigationDestination(icon: Icon(Icons.download_done_rounded), label: 'التحميلات'),
-          NavigationDestination(icon: Icon(Icons.fingerprint_rounded), label: 'السبحة'),
+          NavigationDestination(icon: Icon(Icons.auto_graph_rounded), label: 'خطط الحفظ'),
+          NavigationDestination(icon: Icon(Icons.wb_sunny_outlined), label: 'الأذكار'),
           NavigationDestination(icon: Icon(Icons.settings_rounded), label: 'الإعدادات'),
         ],
       ),
@@ -566,7 +676,7 @@ class _RootNavScreenState extends State<RootNavScreen> {
 }
 
 // ============================================================================
-// 4. الشاشة الرئيسية: المصحف والمؤقت السريع
+// 5. الشاشة الرئيسية: المصحف والمؤقت الحي بدون تجمد نهائياً
 // ============================================================================
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -581,7 +691,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // تظهر نافذة طلب الصلاحية على الشاشة تلقائياً بعد تشغيل التطبيق بثوانٍ قليلة وبدون تعليق
     WidgetsBinding.instance.addPostFrameCallback((_) {
       appEngine.requestAppPermissions(context);
     });
@@ -604,10 +713,8 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.my_location),
-            tooltip: 'تحديث الموقع ومواقيت الصلاة',
-            onPressed: () {
-              appEngine.requestAppPermissions(context);
-            },
+            tooltip: 'تحديث مواقيت الصلاة لموقعك',
+            onPressed: () => appEngine.requestAppPermissions(context),
           ),
           IconButton(
             icon: Icon(appEngine.isDark ? Icons.light_mode : Icons.dark_mode),
@@ -618,10 +725,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: CustomScrollView(
         slivers: [
+          // المؤقت الحي معزول في AnimatedBuilder ليعمل ثانية بثانية بدون أي تجمد
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
-              child: _buildCountdownBanner(),
+              child: AnimatedBuilder(
+                animation: appEngine,
+                builder: (context, _) => _buildLiveCountdownBanner(),
+              ),
             ),
           ),
           SliverToBoxAdapter(
@@ -630,7 +741,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: TextField(
                 onChanged: (v) => setState(() => search = v),
                 decoration: InputDecoration(
-                  hintText: 'ابحث عن سورة بالاسم (مثال: الكهف، مريم)...',
+                  hintText: 'ابحث عن أي سورة بالاسم (مثال: الكهف، مريم)...',
                   prefixIcon: const Icon(Icons.search, color: Color(0xFFC5A059)),
                   filled: true,
                   fillColor: theme.colorScheme.surface,
@@ -645,6 +756,8 @@ class _HomeScreenState extends State<HomeScreen> {
               delegate: SliverChildBuilderDelegate(
                 (context, i) {
                   final s = filtered[i];
+                  final isFav = appEngine.bookmarkedSurahs.contains(s.number);
+
                   return Card(
                     elevation: 0,
                     margin: const EdgeInsets.only(bottom: 8),
@@ -660,12 +773,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       title: Text(s.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
                       subtitle: Text('${s.type} • ${s.ayahsCount} آيات • صـ ${s.startPage}'),
-                      trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: Icon(isFav ? Icons.bookmark : Icons.bookmark_border, color: isFav ? const Color(0xFFC5A059) : Colors.grey),
+                            onPressed: () => appEngine.toggleBookmark(s.number),
+                          ),
+                          const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+                        ],
+                      ),
                       onTap: () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => Directionality(textDirection: TextDirection.rtl, child: SurahViewer(surah: s)),
+                            builder: (_) => Directionality(textDirection: TextDirection.rtl, child: SurahReaderView(surah: s)),
                           ),
                         );
                       },
@@ -681,7 +803,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildCountdownBanner() {
+  Widget _buildLiveCountdownBanner() {
     final d = appEngine.remainingTime;
     final h = d.inHours.toString().padLeft(2, '0');
     final m = (d.inMinutes % 60).toString().padLeft(2, '0');
@@ -700,13 +822,13 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text("الصلاة القادمة: صلاة ${appEngine.nextPrayer}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-              const Icon(Icons.alarm_on, color: Color(0xFFC5A059)),
+              const Icon(Icons.access_time_filled, color: Color(0xFFC5A059)),
             ],
           ),
           const SizedBox(height: 14),
           Text("$h:$m:$s", style: const TextStyle(fontSize: 38, color: Color(0xFFC5A059), fontWeight: FontWeight.bold, letterSpacing: 2)),
           const SizedBox(height: 4),
-          const Text("الوقت المتبقي حتى الأذان (محدث تلقائياً)", style: TextStyle(color: Colors.white70, fontSize: 12)),
+          const Text("الوقت المتبقي حتى الأذان (محدث ثانية بثانية بدون توقف)", style: TextStyle(color: Colors.white70, fontSize: 12)),
         ],
       ),
     );
@@ -714,17 +836,17 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ============================================================================
-// 5. قارئ المصحف الشريف
+// 6. قارئ المصحف الشريف (صفحات مصورة أوفلاين + نص وتفسير)
 // ============================================================================
-class SurahViewer extends StatefulWidget {
+class SurahReaderView extends StatefulWidget {
   final SurahData surah;
-  const SurahViewer({super.key, required this.surah});
+  const SurahReaderView({super.key, required this.surah});
 
   @override
-  State<SurahViewer> createState() => _SurahViewerState();
+  State<SurahReaderView> createState() => _SurahReaderViewState();
 }
 
-class _SurahViewerState extends State<SurahViewer> with SingleTickerProviderStateMixin {
+class _SurahReaderViewState extends State<SurahReaderView> with SingleTickerProviderStateMixin {
   late TabController tabCtrl;
   bool loading = true;
   List<dynamic> ayahs = [];
@@ -734,11 +856,11 @@ class _SurahViewerState extends State<SurahViewer> with SingleTickerProviderStat
   void initState() {
     super.initState();
     tabCtrl = TabController(length: 2, vsync: this);
-    _checkLocalImage();
-    _loadSurahTextWithCache();
+    _checkOfflineImage();
+    _fetchTextWithCache();
   }
 
-  Future<void> _checkLocalImage() async {
+  Future<void> _checkOfflineImage() async {
     final pageNumStr = widget.surah.startPage.toString().padLeft(3, '0');
     final dir = await getApplicationDocumentsDirectory();
     final filePath = "${dir.path}/page_$pageNumStr.png";
@@ -758,7 +880,7 @@ class _SurahViewerState extends State<SurahViewer> with SingleTickerProviderStat
     }
   }
 
-  Future<void> _loadSurahTextWithCache() async {
+  Future<void> _fetchTextWithCache() async {
     final cacheKey = "surah_text_${widget.surah.number}";
     final cached = appEngine.prefs.getString(cacheKey);
 
@@ -805,7 +927,7 @@ class _SurahViewerState extends State<SurahViewer> with SingleTickerProviderStat
           (i) => {
             'number': i + 1,
             'text': "آية رقم ${i + 1} من ${widget.surah.name}",
-            'tafseer': "تفسير الآية متاح بعد الاتصال بالإنترنت لأول مرة ليتم حفظه تلقائياً.",
+            'tafseer': "التفسير الميسر متاح بمجرد الاتصال بالإنترنت أول مرة ليتم حفظه تلقائياً.",
           },
         );
         loading = false;
@@ -825,7 +947,7 @@ class _SurahViewerState extends State<SurahViewer> with SingleTickerProviderStat
           controller: tabCtrl,
           indicatorColor: const Color(0xFFC5A059),
           tabs: const [
-            Tab(icon: Icon(Icons.image), text: "صفحة المصحف (أوفلاين)"),
+            Tab(icon: Icon(Icons.image), text: "صفحة المصحف"),
             Tab(icon: Icon(Icons.format_align_right), text: "النص والتفسير"),
           ],
         ),
@@ -845,19 +967,10 @@ class _SurahViewerState extends State<SurahViewer> with SingleTickerProviderStat
                       fit: BoxFit.contain,
                       loadingBuilder: (ctx, child, progress) {
                         if (progress == null) return child;
-                        return const Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              CircularProgressIndicator(color: Color(0xFF0A4D3C)),
-                              SizedBox(height: 10),
-                              Text("جاري تنزيل وحفظ صفحة المصحف للأوفلاين..."),
-                            ],
-                          ),
-                        );
+                        return const Center(child: CircularProgressIndicator(color: Color(0xFF0A4D3C)));
                       },
                       errorBuilder: (_, __, ___) => const Center(
-                        child: Text("تعذر جلب صورة المصحف، يرجى تشغيل الإنترنت لمرة واحدة لحفظها."),
+                        child: Text("تعذر تحميل صورة المصحف، تأكد من الاتصال بالإنترنت لحفظها."),
                       ),
                     ),
             ),
@@ -897,16 +1010,16 @@ class _SurahViewerState extends State<SurahViewer> with SingleTickerProviderStat
 }
 
 // ============================================================================
-// 6. مشغل الصوتيات مع إمكانية التحميل أوفلاين
+// 7. استوديو التلاوات مع مشغل شاشة القفل والتحميلات
 // ============================================================================
-class AudioScreen extends StatefulWidget {
-  const AudioScreen({super.key});
+class AudioStudioScreen extends StatefulWidget {
+  const AudioStudioScreen({super.key});
 
   @override
-  State<AudioScreen> createState() => _AudioScreenState();
+  State<AudioStudioScreen> createState() => _AudioStudioScreenState();
 }
 
-class _AudioScreenState extends State<AudioScreen> {
+class _AudioStudioScreenState extends State<AudioStudioScreen> {
   String searchReciter = "";
 
   String _format(Duration d) {
@@ -942,7 +1055,7 @@ class _AudioScreenState extends State<AudioScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(color: const Color(0xFFC5A059), borderRadius: BorderRadius.circular(8)),
-                    child: const Text("تشغيل بدون إنترنت (محلي)", style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)),
+                    child: const Text("تشغيل بدون إنترنت (أوفلاين)", style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)),
                   ),
                 Slider(
                   value: appEngine.position.inSeconds.toDouble().clamp(0.0, (appEngine.duration.inSeconds > 0) ? appEngine.duration.inSeconds.toDouble() : 1.0),
@@ -988,7 +1101,7 @@ class _AudioScreenState extends State<AudioScreen> {
               children: [
                 Text("القارئ: ${curReciter.name}", style: const TextStyle(fontWeight: FontWeight.bold)),
                 TextButton.icon(
-                  onPressed: () => _chooseReciterDialog(),
+                  onPressed: () => _showRecitersModal(),
                   icon: const Icon(Icons.person, color: Color(0xFFC5A059)),
                   label: const Text('تغيير (30+)', style: TextStyle(color: Color(0xFFC5A059))),
                 ),
@@ -1012,11 +1125,7 @@ class _AudioScreenState extends State<AudioScreen> {
                   title: Text(s.name, style: TextStyle(fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal)),
                   subtitle: Text("${s.type} • ${s.ayahsCount} آية"),
                   trailing: prog != null
-                      ? SizedBox(
-                          width: 32,
-                          height: 32,
-                          child: CircularProgressIndicator(value: prog, color: const Color(0xFFC5A059)),
-                        )
+                      ? SizedBox(width: 32, height: 32, child: CircularProgressIndicator(value: prog, color: const Color(0xFFC5A059)))
                       : IconButton(
                           icon: Icon(
                             isDownloaded ? Icons.download_done : Icons.download_for_offline_outlined,
@@ -1040,7 +1149,7 @@ class _AudioScreenState extends State<AudioScreen> {
     );
   }
 
-  void _chooseReciterDialog() {
+  void _showRecitersModal() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1052,7 +1161,7 @@ class _AudioScreenState extends State<AudioScreen> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                const Text('اختر القارئ المفضل', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                const Text('اختر قارئك المفضل', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 const SizedBox(height: 10),
                 TextField(
                   onChanged: (v) => setM(() => searchReciter = v),
@@ -1086,195 +1195,269 @@ class _AudioScreenState extends State<AudioScreen> {
 }
 
 // ============================================================================
-// 7. قسم التحميلات الصوتية الأوفلاين
+// 8. قسم خطط حفظ القرآن الكريم التفاعلي المتقدم
 // ============================================================================
-class DownloadsScreen extends StatelessWidget {
-  const DownloadsScreen({super.key});
+class HifzPlansScreen extends StatelessWidget {
+  const HifzPlansScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final list = appEngine.downloadedList;
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('السور الصوتية المحملة (أوفلاين)', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('خطط حفظ القرآن الكريم', style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add_task),
+            tooltip: 'إنشاء خطة جديدة',
+            onPressed: () => _showCreatePlanDialog(context),
+          ),
+        ],
       ),
-      body: list.isEmpty
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.download_for_offline_outlined, size: 70, color: Colors.grey),
-                  SizedBox(height: 12),
-                  Text('لا توجد سور محملة بعد.', style: TextStyle(color: Colors.grey, fontSize: 16)),
-                  SizedBox(height: 6),
-                  Text('يمكنك الذهاب لقسم "التلاوات" وتحميل أي سورة للاستماع بدون إنترنت.', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                ],
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: list.length,
-              itemBuilder: (ctx, i) {
-                final item = list[i];
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      backgroundColor: Color(0xFF0A4D3C),
-                      child: Icon(Icons.play_arrow, color: Colors.white),
-                    ),
-                    title: Text(item.surahName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text("${item.reciterName} • ملف محلي أوفلاين"),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                      onPressed: () => appEngine.deleteDownloadedAudio(item),
-                    ),
-                    onTap: () => appEngine.playDownloadedFile(item),
+      body: AnimatedBuilder(
+        animation: appEngine,
+        builder: (context, _) {
+          final plans = appEngine.hifzPlans;
+          if (plans.isEmpty) {
+            return const Center(child: Text('لا توجد خطط حالية، اضغط على + لإنشاء خطتك الأولى!'));
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: plans.length,
+            itemBuilder: (ctx, idx) {
+              final p = plans[idx];
+              final progress = (p.completedPages / p.targetPages).clamp(0.0, 1.0);
+              final remainingPages = p.targetPages - p.completedPages;
+              final remainingDays = (remainingPages / p.dailyPages).ceil();
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(p.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => appEngine.deleteHifzPlan(p.id),
+                          )
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 10,
+                        borderRadius: BorderRadius.circular(8),
+                        color: const Color(0xFF0A4D3C),
+                        backgroundColor: Colors.grey.shade200,
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('تم إنجاز: ${p.completedPages} من ${p.targetPages} صفحة', style: const TextStyle(fontSize: 12)),
+                          Text('${(progress * 100).toStringAsFixed(1)}%', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text('الورد اليومي: ${p.dailyPages} صفحة • الختم المتوقع خلال: $remainingDays يوم', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () => appEngine.incrementPlanProgress(p.id, 1),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0A4D3C),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.check, size: 18),
+                              label: const Text('حفظت +1 صفحة'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () => appEngine.incrementPlanProgress(p.id, 2),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFC5A059),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.add_circle_outline, size: 18),
+                              label: const Text('حفظت +2 صفحة'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                );
-              },
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  void _showCreatePlanDialog(BuildContext context) {
+    final titleCtrl = TextEditingController(text: "خطة حفظ سورة البقرة");
+    final targetCtrl = TextEditingController(text: "48");
+    final dailyCtrl = TextEditingController(text: "2");
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('إنشاء خطة حفظ جديدة'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'اسم الخطة')),
+                TextField(controller: targetCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'إجمالي الصفحات المستهدفة')),
+                TextField(controller: dailyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الورد اليومي (صفحة/يوم)')),
+              ],
             ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+            ElevatedButton(
+              onPressed: () {
+                final t = titleCtrl.text.trim();
+                final target = int.tryParse(targetCtrl.text) ?? 20;
+                final daily = int.tryParse(dailyCtrl.text) ?? 1;
+                if (t.isNotEmpty) {
+                  appEngine.createNewHifzPlan(t, target, daily);
+                }
+                Navigator.pop(ctx);
+              },
+              child: const Text('إنشاء الخطة'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
 // ============================================================================
-// 8. السبحة الإلكترونية التفاعلية
+// 9. قسم الأذكار وحصن المسلم مع عداد تفاعلي
 // ============================================================================
-class TasbihScreen extends StatefulWidget {
-  const TasbihScreen({super.key});
+class AzkarScreen extends StatefulWidget {
+  const AzkarScreen({super.key});
 
   @override
-  State<TasbihScreen> createState() => _TasbihScreenState();
+  State<AzkarScreen> createState() => _AzkarScreenState();
 }
 
-class _TasbihScreenState extends State<TasbihScreen> with SingleTickerProviderStateMixin {
-  late AnimationController animCtrl;
-  final TextEditingController newZikr = TextEditingController();
+class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  final List<ZikrItem> sabahAzkar = [
+    ZikrItem(text: "أَصْبَحْنَا وَأَصْبَحَ الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ، لاَ إِلَـهَ إِلاَّ اللهُ وَحْدَهُ لاَ شَرِيكَ لَهُ.", count: "1", reward: "حفظ وبركة في اليوم كله"),
+    ZikrItem(text: "اللّهُـمَّ أَنْتَ رَبِّـي لا إِلَهَ إِلا أَنْتَ، خَلَقْتَنـي وَأَنا عَبْـدُك، وَأَنا عَلـى عَهْـدِكَ وَوَعْـدِكَ ما اسْتَطَـعْت..", count: "1", reward: "سيد الاستغفار: من قالها موقناً بها فمات دخل الجنة"),
+    ZikrItem(text: "سُبْحَانَ اللهِ وَبِحَمْدِهِ: عَدَدَ خَلْقِهِ، وَرِضَا نَفْسِهِ، وَزِنَةَ عَرْشِهِ، وَمِدَادَ كَلِمَاتِهِ.", count: "3", reward: "تعدل ساعات طويلة من الذكر"),
+    ZikrItem(text: "بِسْمِ اللَّهِ الَّذِي لَا يَضُرُّ مَعَ اسْمِهِ شَيْءٌ فِي الْأَرْضِ وَلَا فِي السَّمَاءِ وَهُوَ السَّمِيعُ الْعَلِيمُ.", count: "3", reward: "لم يضره شيء قط في يومه"),
+  ];
+
+  final List<ZikrItem> masaaAzkar = [
+    ZikrItem(text: "أَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ، لاَ إِلَـهَ إِلاَّ اللهُ وَحْدَهُ لاَ شَرِيكَ لَهُ.", count: "1", reward: "حفظ وبركة طوال الليل"),
+    ZikrItem(text: "أَعُوذُ بِكَلِمَاتِ اللهِ التَّامَّاتِ مِنْ شَرِّ مَا خَلَقَ.", count: "3", reward: "لم يضره شيء في ليلته"),
+    ZikrItem(text: "اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَفْوَ وَالْعَافِيَةَ فِي الدُّنْيَا وَالآخِرَةِ.", count: "1", reward: "الحفظ والعافية التامة"),
+  ];
 
   @override
   void initState() {
     super.initState();
-    animCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 90), lowerBound: 0.94, upperBound: 1.0, value: 1.0);
-  }
-
-  @override
-  void dispose() {
-    animCtrl.dispose();
-    newZikr.dispose();
-    super.dispose();
+    _tabController = TabController(length: 2, vsync: this);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('السبحة الذكية', style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('إضافة ذكر جديد'),
-                  content: TextField(controller: newZikr, decoration: const InputDecoration(hintText: 'اكتب الذكر...')),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+        title: const Text('أذكار المسلم اليومية', style: TextStyle(fontWeight: FontWeight.bold)),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: const Color(0xFFC5A059),
+          tabs: const [
+            Tab(text: "أذكار الصباح ☀️"),
+            Tab(text: "أذكار المساء 🌙"),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildAzkarList(sabahAzkar),
+          _buildAzkarList(masaaAzkar),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAzkarList(List<ZikrItem> list) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: list.length,
+      itemBuilder: (ctx, idx) {
+        final item = list[idx];
+        final maxCount = int.tryParse(item.count) ?? 1;
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.text, style: GoogleFonts.amiri(fontSize: 19, height: 1.9)),
+                const SizedBox(height: 8),
+                Text("الفضل: ${item.reward}", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("التكرار المطلوب: ${item.count}", style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
                     ElevatedButton(
                       onPressed: () {
-                        appEngine.addNewZikr(newZikr.text);
-                        newZikr.clear();
-                        Navigator.pop(ctx);
+                        HapticFeedback.lightImpact();
+                        setState(() {
+                          if (item.current < maxCount) item.current++;
+                        });
                       },
-                      child: const Text('حفظ'),
-                    )
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: item.current >= maxCount ? Colors.grey : const Color(0xFF0A4D3C),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: Text(item.current >= maxCount ? 'تم الإنجاز ✔' : 'تم ${item.current} / $maxCount'),
+                    ),
                   ],
                 ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 44,
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              scrollDirection: Axis.horizontal,
-              itemCount: appEngine.azkarList.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (ctx, i) {
-                final z = appEngine.azkarList[i];
-                final sel = appEngine.selectedZikr == z;
-                return ChoiceChip(
-                  label: Text(z),
-                  selected: sel,
-                  selectedColor: const Color(0xFF0A4D3C),
-                  labelStyle: TextStyle(color: sel ? Colors.white : null, fontWeight: FontWeight.bold),
-                  onSelected: (_) {
-                    setState(() {
-                      appEngine.selectedZikr = z;
-                      appEngine.resetTasbih();
-                    });
-                  },
-                );
-              },
+              ],
             ),
           ),
-          const Spacer(),
-          GestureDetector(
-            onTapDown: (_) => animCtrl.reverse(),
-            onTapUp: (_) {
-              animCtrl.forward();
-              HapticFeedback.lightImpact();
-              appEngine.hitTasbih();
-            },
-            child: ScaleTransition(
-              scale: animCtrl,
-              child: Container(
-                width: 250,
-                height: 250,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Theme.of(context).colorScheme.surface,
-                  boxShadow: [
-                    BoxShadow(color: const Color(0xFF0A4D3C).withOpacity(0.18), blurRadius: 25, spreadRadius: 4),
-                  ],
-                  border: Border.all(color: const Color(0xFFC5A059), width: 4),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(appEngine.selectedZikr, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0A4D3C))),
-                    const SizedBox(height: 10),
-                    Text('${appEngine.tasbihCount}', style: const TextStyle(fontSize: 56, fontWeight: FontWeight.bold)),
-                    const Text('المس للتسبيح', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const Spacer(),
-          ElevatedButton.icon(
-            onPressed: () => appEngine.resetTasbih(),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade400, foregroundColor: Colors.white),
-            icon: const Icon(Icons.refresh),
-            label: const Text('إعادة البدء'),
-          ),
-          const SizedBox(height: 40),
-        ],
-      ),
+        );
+      },
     );
   }
 }
 
 // ============================================================================
-// 9. شاشة الإعدادات
+// 10. شاشة الإعدادات والتحكم بالتطبيق
 // ============================================================================
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -1283,40 +1466,83 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('الإعدادات', style: TextStyle(fontWeight: FontWeight.bold))),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          SwitchListTile(
-            title: const Text('الوضع الليلي (Dark Mode)'),
-            value: appEngine.isDark,
-            activeColor: const Color(0xFFC5A059),
-            onChanged: (_) => appEngine.toggleTheme(),
-          ),
-          const Divider(),
-          ListTile(
-            title: const Text('حجم خط الآيات القرآنية'),
-            subtitle: Slider(
-              value: appEngine.fontSize,
-              min: 18,
-              max: 38,
-              activeColor: const Color(0xFF0A4D3C),
-              onChanged: (v) => appEngine.updateFontSize(v),
-            ),
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.info_outline, color: Color(0xFF0A4D3C)),
-            title: const Text('عن تطبيق قرآني'),
-            subtitle: const Text('تطبيق إسلامي شامل ومجاني بدون إعلانات'),
-          ),
-        ],
+      body: AnimatedBuilder(
+        animation: appEngine,
+        builder: (context, _) {
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: SwitchListTile(
+                  title: const Text('الوضع الليلي (Dark Mode)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('تبديل مظهر التطبيق فورياً وتوفير البطارية'),
+                  value: appEngine.isDark,
+                  activeColor: const Color(0xFFC5A059),
+                  onChanged: (_) => appEngine.toggleTheme(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('حجم خط الآيات القرآنية', style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text('${appEngine.fontSize.toInt()}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0A4D3C))),
+                        ],
+                      ),
+                      Slider(
+                        value: appEngine.fontSize,
+                        min: 18,
+                        max: 38,
+                        divisions: 10,
+                        activeColor: const Color(0xFF0A4D3C),
+                        onChanged: (v) => appEngine.updateFontSize(v),
+                      ),
+                      Center(
+                        child: Text(
+                          "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ",
+                          style: GoogleFonts.amiri(fontSize: appEngine.fontSize),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: ListTile(
+                  leading: const Icon(Icons.bookmark, color: Color(0xFFC5A059)),
+                  title: const Text('السور المحفوظة في المفضلة', style: TextStyle(fontWeight: FontWeight.bold)),
+                  trailing: Text('${appEngine.bookmarkedSurahs.length} سورة'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: const ListTile(
+                  leading: Icon(Icons.info_outline, color: Color(0xFF0A4D3C)),
+                  title: Text('عن تطبيق قرآني'),
+                  subtitle: Text('تطبيق إسلامي شامل صدقة جارية - الإصدار 2.0 المطور'),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
 // ============================================================================
-// 10. قاعدة بيانات القراء (32 قارئاً بروايات مختلفة)
+// 11. قاعدة بيانات كبار القراء (32 قارئاً بروايات مختلفة)
 // ============================================================================
 final List<ReciterData> allReciters = [
   const ReciterData(id: "afs", name: "مشاري راشد العفاسي", riwayah: "حفص عن عاصم", server: "https://server8.mp3quran.net/afs"),
@@ -1354,7 +1580,7 @@ final List<ReciterData> allReciters = [
 ];
 
 // ============================================================================
-// 11. فهرس الـ 114 سورة كاملاً
+// 12. فهرس الـ 114 سورة كاملاً
 // ============================================================================
 final List<SurahData> surahsCatalog = [
   const SurahData(number: 1, name: "الفاتحة", englishName: "Al-Fatiha", type: "مكية", ayahsCount: 7, startPage: 1),
