@@ -28,7 +28,7 @@ void main() async {
       androidNotificationIcon: 'drawable/ic_launcher',
     );
   } catch (e) {
-    debugPrint("Note: JustAudioBackground Init: $e");
+    debugPrint("JustAudioBackground Note: $e");
   }
 
   await AppNotificationService.init();
@@ -38,7 +38,7 @@ void main() async {
 }
 
 // ============================================================================
-// 1. خدمة الإشعارات وتذكيرات الأذكار والصلوات
+// 1. خدمة الإشعارات والجدولة
 // ============================================================================
 class AppNotificationService {
   static final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
@@ -56,8 +56,8 @@ class AppNotificationService {
   }
 
   static Future<void> _scheduleDailyReminders() async {
-    await _scheduleDaily(101, 'أذكار الصباح المباركة ☀️', 'ابدأ يومك بذكر الله: أصبحنا وأصبح الملك لله..', 7, 0);
-    await _scheduleDaily(102, 'أذكار المساء وحصن المسلم 🌙', 'أمسينا وأمسى الملك لله والحمد لله.. حصّن نفسك بذكر الله.', 17, 0);
+    await _scheduleDaily(101, 'أذكار الصباح المباركة ☀️', 'ابدأ يومك بنور الذكر: أصبحنا وأصبح الملك لله..', 7, 0);
+    await _scheduleDaily(102, 'أذكار المساء وحصن المسلم 🌙', 'أمسينا وأمسى الملك لله.. حصّن نفسك بأذكار المساء.', 17, 0);
   }
 
   static Future<void> _scheduleDaily(int id, String title, String body, int hour, int minute) async {
@@ -161,12 +161,14 @@ class DownloadedAudio {
   final String surahName;
   final String reciterName;
   final String filePath;
+  final int fileSize;
 
   DownloadedAudio({
     required this.surahNumber,
     required this.surahName,
     required this.reciterName,
     required this.filePath,
+    this.fileSize = 0,
   });
 
   Map<String, dynamic> toMap() => {
@@ -174,6 +176,7 @@ class DownloadedAudio {
     'surahName': surahName,
     'reciterName': reciterName,
     'filePath': filePath,
+    'fileSize': fileSize,
   };
 
   factory DownloadedAudio.fromMap(Map<String, dynamic> map) => DownloadedAudio(
@@ -181,6 +184,7 @@ class DownloadedAudio {
     surahName: map['surahName'],
     reciterName: map['reciterName'],
     filePath: map['filePath'],
+    fileSize: map['fileSize'] ?? 0,
   );
 }
 
@@ -239,6 +243,7 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
   bool isDark = false;
   double fontSize = 24.0;
 
+  // مشغل الصوتيات
   int currentReciterIndex = 0;
   int currentSurahIndex = 0;
   bool isAudioBuffering = false;
@@ -247,10 +252,16 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
   String currentPlayingTitle = "";
   bool isPlayingOffline = false;
 
+  // المؤقت ومواقيت الصلاة
   PrayerTimes? prayerTimes;
   String nextPrayer = "الفجر";
   Duration remainingTime = Duration.zero;
   Timer? ticker;
+
+  // ميزة موضع التوقف
+  int? stopPositionSurahNumber;
+  String? stopPositionSurahName;
+  int? stopPositionPage;
 
   List<DownloadedAudio> downloadedList = [];
   Map<int, double> downloadProgress = {};
@@ -268,6 +279,11 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
   void _loadPreferences() {
     isDark = prefs.getBool('isDark') ?? false;
     fontSize = prefs.getDouble('fontSize') ?? 24.0;
+
+    // استرجاع موضع التوقف
+    stopPositionSurahNumber = prefs.getInt('stop_surah_num');
+    stopPositionSurahName = prefs.getString('stop_surah_name');
+    stopPositionPage = prefs.getInt('stop_surah_page');
 
     final bList = prefs.getStringList('bookmarks');
     if (bList != null) bookmarkedSurahs = bList.map((e) => int.parse(e)).toList();
@@ -313,6 +329,7 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  // --- تشغيل الصوتيات مع نظام الحماية من أخطاء الروابط ---
   Future<void> playSurah(int surahIdx, {int? reciterIdx, bool forceOnline = false}) async {
     if (reciterIdx != null) currentReciterIndex = reciterIdx;
     currentSurahIndex = surahIdx;
@@ -329,29 +346,63 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       await player.stop();
+      final numPad = surah.number.toString().padLeft(3, '0');
+      final remoteUrl = "${reciter.server}/$numPad.mp3";
+
       final mediaItem = MediaItem(
         id: '${surah.number}_${reciter.id}',
         album: 'القرآن الكريم',
         title: surah.name,
         artist: reciter.name,
-        artUri: Uri.parse("https://raw.githubusercontent.com/Govar-Frman/Quran-Page-Images/main/pages/${surah.startPage.toString().padLeft(3, '0')}.png"),
       );
 
       if (localMatch.surahNumber != -1 && File(localMatch.filePath).existsSync() && !forceOnline) {
         isPlayingOffline = true;
-        await player.setAudioSource(AudioSource.file(localMatch.filePath, tag: mediaItem));
+        try {
+          await player.setAudioSource(AudioSource.file(localMatch.filePath, tag: mediaItem));
+        } catch (_) {
+          await player.setFilePath(localMatch.filePath);
+        }
       } else {
         isPlayingOffline = false;
-        final numPad = surah.number.toString().padLeft(3, '0');
-        final remoteUrl = "${reciter.server}/$numPad.mp3";
-        await player.setAudioSource(AudioSource.uri(Uri.parse(remoteUrl), tag: mediaItem));
+        try {
+          await player.setAudioSource(AudioSource.uri(Uri.parse(remoteUrl), tag: mediaItem));
+        } catch (_) {
+          // خطة بديلة سريعة لتشغيل الرابط مباشرة بدون وسائط شاشة القفل إذا تعذر ذلك
+          await player.setUrl(remoteUrl);
+        }
       }
-      player.play();
+      await player.play();
     } catch (e) {
       debugPrint("Audio Play Error: $e");
     } finally {
       isAudioBuffering = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> playDownloadedFile(DownloadedAudio item) async {
+    try {
+      await player.stop();
+      currentPlayingTitle = "${item.surahName} (${item.reciterName}) - بدون إنترنت";
+      isPlayingOffline = true;
+      notifyListeners();
+
+      final mediaItem = MediaItem(
+        id: 'local_${item.surahNumber}',
+        album: 'القرآن الكريم (محلي)',
+        title: item.surahName,
+        artist: item.reciterName,
+      );
+
+      try {
+        await player.setAudioSource(AudioSource.file(item.filePath, tag: mediaItem));
+      } catch (_) {
+        await player.setFilePath(item.filePath);
+      }
+      await player.play();
+    } catch (e) {
+      debugPrint("File playback error: $e");
     }
   }
 
@@ -380,6 +431,7 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  // --- تحميل السور الصوتية ---
   Future<void> downloadSurahAudio(SurahData surah, ReciterData reciter) async {
     final numPad = surah.number.toString().padLeft(3, '0');
     final remoteUrl = "${reciter.server}/$numPad.mp3";
@@ -410,12 +462,15 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
 
       await sink.close();
 
+      final int bytes = await file.length();
+
       downloadedList.removeWhere((d) => d.surahNumber == surah.number && d.reciterName == reciter.name);
       downloadedList.add(DownloadedAudio(
         surahNumber: surah.number,
         surahName: surah.name,
         reciterName: reciter.name,
         filePath: savePath,
+        fileSize: bytes,
       ));
 
       prefs.setString('downloaded_audios', jsonEncode(downloadedList.map((e) => e.toMap()).toList()));
@@ -427,8 +482,45 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void deleteDownloadedAudio(DownloadedAudio item) {
+    try {
+      final f = File(item.filePath);
+      if (f.existsSync()) f.deleteSync();
+      downloadedList.remove(item);
+      prefs.setString('downloaded_audios', jsonEncode(downloadedList.map((e) => e.toMap()).toList()));
+      notifyListeners();
+    } catch (_) {}
+  }
+
   bool isSurahDownloaded(int surahNum, String reciterName) {
     return downloadedList.any((d) => d.surahNumber == surahNum && d.reciterName == reciterName);
+  }
+
+  // --- ميزة حفظ وإلغاء موضع التوقف ---
+  void setStopPosition(SurahData surah) {
+    stopPositionSurahNumber = surah.number;
+    stopPositionSurahName = surah.name;
+    stopPositionPage = surah.startPage;
+
+    prefs.setInt('stop_surah_num', surah.number);
+    prefs.setString('stop_surah_name', surah.name);
+    prefs.setInt('stop_surah_page', surah.startPage);
+    notifyListeners();
+  }
+
+  void clearStopPosition() {
+    stopPositionSurahNumber = null;
+    stopPositionSurahName = null;
+    stopPositionPage = null;
+
+    prefs.remove('stop_surah_num');
+    prefs.remove('stop_surah_name');
+    prefs.remove('stop_surah_page');
+    notifyListeners();
+  }
+
+  bool isCurrentStopPosition(int surahNumber) {
+    return stopPositionSurahNumber == surahNumber;
   }
 
   // --- خطط الحفظ ---
@@ -462,9 +554,9 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  // --- مواقيت الصلاة والمؤقت الحي بدون تجمد ---
+  // --- مواقيت الصلاة والمؤقت الحي ---
   void _initPrayerTimesFast() {
-    _calculatePrayer(Coordinates(21.4225, 39.8262)); // مكة المكرمة فورياً
+    _calculatePrayer(Coordinates(21.4225, 39.8262));
   }
 
   Future<void> requestAppPermissions(BuildContext context) async {
@@ -550,7 +642,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  // --- الإعدادات والمظهر ---
   void toggleTheme() {
     isDark = !isDark;
     prefs.setBool('isDark', isDark);
@@ -593,7 +684,7 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
 late AppEngine appEngine;
 
 // ============================================================================
-// 4. التطبيق الرئيسي والهوية البصرية
+// 4. التطبيق الرئيسي والهوية البصرية مع إصلاح شريط الحالة العلوي
 // ============================================================================
 class QuraniUltimateMasterApp extends StatelessWidget {
   final SharedPreferences prefs;
@@ -609,6 +700,17 @@ class QuraniUltimateMasterApp extends StatelessWidget {
         const primaryColor = Color(0xFF0A4D3C);
         const goldColor = Color(0xFFC5A059);
 
+        // ضبط ألوان شريط الحالة العلوي بدقة ليتغير فورياً مع المظهر وبدون أي خط أسود
+        SystemChrome.setSystemUIOverlayStyle(
+          SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: appEngine.isDark ? Brightness.light : Brightness.dark,
+            statusBarBrightness: appEngine.isDark ? Brightness.dark : Brightness.light,
+            systemNavigationBarColor: appEngine.isDark ? const Color(0xFF0E1613) : Colors.white,
+            systemNavigationBarIconBrightness: appEngine.isDark ? Brightness.light : Brightness.dark,
+          ),
+        );
+
         return MaterialApp(
           title: 'قرآني',
           debugShowCheckedModeBanner: false,
@@ -618,6 +720,11 @@ class QuraniUltimateMasterApp extends StatelessWidget {
             brightness: Brightness.light,
             primaryColor: primaryColor,
             scaffoldBackgroundColor: const Color(0xFFF9F7F2),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              systemOverlayStyle: SystemUiOverlayStyle.dark,
+            ),
             colorScheme: ColorScheme.fromSeed(seedColor: primaryColor, primary: primaryColor, secondary: goldColor, surface: Colors.white),
             textTheme: GoogleFonts.cairoTextTheme(ThemeData.light().textTheme),
           ),
@@ -626,6 +733,11 @@ class QuraniUltimateMasterApp extends StatelessWidget {
             brightness: Brightness.dark,
             primaryColor: goldColor,
             scaffoldBackgroundColor: const Color(0xFF0E1613),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              systemOverlayStyle: SystemUiOverlayStyle.light,
+            ),
             colorScheme: ColorScheme.fromSeed(seedColor: primaryColor, primary: goldColor, secondary: primaryColor, surface: const Color(0xFF15221E), brightness: Brightness.dark),
             textTheme: GoogleFonts.cairoTextTheme(ThemeData.dark().textTheme),
           ),
@@ -648,6 +760,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   final List<Widget> _screens = const [
     HomeScreen(),
     AudioStudioScreen(),
+    DownloadsScreen(),
     HifzPlansScreen(),
     AzkarScreen(),
     SettingsScreen(),
@@ -666,7 +779,8 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.menu_book_rounded), label: 'المصحف'),
           NavigationDestination(icon: Icon(Icons.headphones_rounded), label: 'التلاوات'),
-          NavigationDestination(icon: Icon(Icons.auto_graph_rounded), label: 'خطط الحفظ'),
+          NavigationDestination(icon: Icon(Icons.download_done_rounded), label: 'التنزيلات'),
+          NavigationDestination(icon: Icon(Icons.auto_graph_rounded), label: 'الحفظ'),
           NavigationDestination(icon: Icon(Icons.wb_sunny_outlined), label: 'الأذكار'),
           NavigationDestination(icon: Icon(Icons.settings_rounded), label: 'الإعدادات'),
         ],
@@ -676,7 +790,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
 }
 
 // ============================================================================
-// 5. الشاشة الرئيسية: المصحف والمؤقت الحي بدون تجمد نهائياً
+// 5. الشاشة الرئيسية: المصحف، موضع التوقف، والمؤقت الحي
 // ============================================================================
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -725,7 +839,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: CustomScrollView(
         slivers: [
-          // المؤقت الحي معزول في AnimatedBuilder ليعمل ثانية بثانية بدون أي تجمد
+          // المؤقت الحي بدون أي تجمد
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
@@ -735,13 +849,74 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+
+          // بطاقة موضع التوقف المحفوظ مع إمكانية المتابعة أو الإلغاء فورياً
+          SliverToBoxAdapter(
+            child: AnimatedBuilder(
+              animation: appEngine,
+              builder: (context, _) {
+                if (appEngine.stopPositionSurahNumber == null) return const SizedBox.shrink();
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFC5A059).withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFC5A059), width: 1.2),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.bookmark, color: Color(0xFFC5A059), size: 30),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("موضع التوقف الحالي:", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                            Text(
+                              "${appEngine.stopPositionSurahName} (صفحة ${appEngine.stopPositionPage})",
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(foregroundColor: const Color(0xFF0A4D3C)),
+                        icon: const Icon(Icons.play_arrow, size: 18),
+                        label: const Text("متابعة", style: TextStyle(fontWeight: FontWeight.bold)),
+                        onPressed: () {
+                          final surah = surahsCatalog.firstWhere((s) => s.number == appEngine.stopPositionSurahNumber);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => Directionality(textDirection: TextDirection.rtl, child: SurahReaderView(surah: surah)),
+                            ),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.redAccent, size: 20),
+                        tooltip: 'إلغاء موضع التوقف',
+                        onPressed: () {
+                          appEngine.clearStopPosition();
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إلغاء موضع التوقف بنجاح')));
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // شريط البحث
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
               child: TextField(
                 onChanged: (v) => setState(() => search = v),
                 decoration: InputDecoration(
-                  hintText: 'ابحث عن أي سورة بالاسم (مثال: الكهف، مريم)...',
+                  hintText: 'ابحث عن أي سورة بالاسم...',
                   prefixIcon: const Icon(Icons.search, color: Color(0xFFC5A059)),
                   filled: true,
                   fillColor: theme.colorScheme.surface,
@@ -750,6 +925,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+
+          // قائمة الـ 114 سورة
           SliverPadding(
             padding: const EdgeInsets.all(16),
             sliver: SliverList(
@@ -757,12 +934,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 (context, i) {
                   final s = filtered[i];
                   final isFav = appEngine.bookmarkedSurahs.contains(s.number);
+                  final isStopPos = appEngine.isCurrentStopPosition(s.number);
 
                   return Card(
                     elevation: 0,
                     margin: const EdgeInsets.only(bottom: 8),
-                    color: theme.colorScheme.surface,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    color: isStopPos ? const Color(0xFFC5A059).withOpacity(0.1) : theme.colorScheme.surface,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: isStopPos ? const BorderSide(color: Color(0xFFC5A059), width: 1.5) : BorderSide.none,
+                    ),
                     child: ListTile(
                       leading: Container(
                         width: 44,
@@ -771,13 +952,26 @@ class _HomeScreenState extends State<HomeScreen> {
                         decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: const Color(0xFFC5A059), width: 1.5)),
                         child: Text('${s.number}', style: const TextStyle(fontWeight: FontWeight.bold)),
                       ),
-                      title: Text(s.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                      title: Row(
+                        children: [
+                          Text(s.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                          if (isStopPos) ...[
+                            const SizedBox(width: 8),
+                            const Chip(
+                              label: Text("موضع التوقف", style: TextStyle(fontSize: 10, color: Colors.white)),
+                              backgroundColor: Color(0xFF0A4D3C),
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                            ),
+                          ],
+                        ],
+                      ),
                       subtitle: Text('${s.type} • ${s.ayahsCount} آيات • صـ ${s.startPage}'),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            icon: Icon(isFav ? Icons.bookmark : Icons.bookmark_border, color: isFav ? const Color(0xFFC5A059) : Colors.grey),
+                            icon: Icon(isFav ? Icons.favorite : Icons.favorite_border, color: isFav ? Colors.redAccent : Colors.grey),
                             onPressed: () => appEngine.toggleBookmark(s.number),
                           ),
                           const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
@@ -836,7 +1030,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ============================================================================
-// 6. قارئ المصحف الشريف (صفحات مصورة أوفلاين + نص وتفسير)
+// 6. قارئ المصحف مع زر حفظ التوقف وزر الإلغاء
 // ============================================================================
 class SurahReaderView extends StatefulWidget {
   final SurahData surah;
@@ -943,6 +1137,28 @@ class _SurahReaderViewState extends State<SurahReaderView> with SingleTickerProv
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.surah.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          AnimatedBuilder(
+            animation: appEngine,
+            builder: (context, _) {
+              final isSaved = appEngine.isCurrentStopPosition(widget.surah.number);
+              return IconButton(
+                icon: Icon(isSaved ? Icons.bookmark : Icons.bookmark_add_outlined),
+                color: isSaved ? const Color(0xFFC5A059) : null,
+                tooltip: isSaved ? 'إلغاء التوقف هنا' : 'حفظ التوقف عند هذه السورة',
+                onPressed: () {
+                  if (isSaved) {
+                    appEngine.clearStopPosition();
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إلغاء موضع التوقف')));
+                  } else {
+                    appEngine.setStopPosition(widget.surah);
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم حفظ ${widget.surah.name} كموضع توقف')));
+                  }
+                },
+              );
+            },
+          ),
+        ],
         bottom: TabBar(
           controller: tabCtrl,
           indicatorColor: const Color(0xFFC5A059),
@@ -1010,7 +1226,7 @@ class _SurahReaderViewState extends State<SurahReaderView> with SingleTickerProv
 }
 
 // ============================================================================
-// 7. استوديو التلاوات مع مشغل شاشة القفل والتحميلات
+// 7. استوديو التلاوات مع المشغل المطور
 // ============================================================================
 class AudioStudioScreen extends StatefulWidget {
   const AudioStudioScreen({super.key});
@@ -1195,7 +1411,71 @@ class _AudioStudioScreenState extends State<AudioStudioScreen> {
 }
 
 // ============================================================================
-// 8. قسم خطط حفظ القرآن الكريم التفاعلي المتقدم
+// 8. قسم التنزيلات الصوتية الأوفلاين (شامل لحجم الملف وإدارته)
+// ============================================================================
+class DownloadsScreen extends StatelessWidget {
+  const DownloadsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('التنزيلات الصوتية (بدون إنترنت)', style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: AnimatedBuilder(
+        animation: appEngine,
+        builder: (context, _) {
+          final list = appEngine.downloadedList;
+          if (list.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.download_for_offline_outlined, size: 70, color: Colors.grey),
+                  SizedBox(height: 12),
+                  Text('لا توجد سور صوتية محملة بعد.', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                  SizedBox(height: 6),
+                  Text('توجه إلى قسم "التلاوات" واضغط على زر التنزيل بجانب أي سورة.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                ],
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: list.length,
+            itemBuilder: (ctx, i) {
+              final item = list[i];
+              final mb = (item.fileSize / (1024 * 1024)).toStringAsFixed(1);
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFF0A4D3C),
+                    child: Icon(Icons.play_arrow, color: Colors.white),
+                  ),
+                  title: Text(item.surahName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text("${item.reciterName} • الحجم: $mb MB"),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    tooltip: 'حذف التنزيل',
+                    onPressed: () => appEngine.deleteDownloadedAudio(item),
+                  ),
+                  onTap: () => appEngine.playDownloadedFile(item),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 9. قسم خطط حفظ القرآن الكريم التفاعلي
 // ============================================================================
 class HifzPlansScreen extends StatelessWidget {
   const HifzPlansScreen({super.key});
@@ -1352,7 +1632,7 @@ class HifzPlansScreen extends StatelessWidget {
 }
 
 // ============================================================================
-// 9. قسم الأذكار وحصن المسلم مع عداد تفاعلي
+// 10. قسم الأذكار اليومية وحصن المسلم
 // ============================================================================
 class AzkarScreen extends StatefulWidget {
   const AzkarScreen({super.key});
@@ -1457,7 +1737,7 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
 }
 
 // ============================================================================
-// 10. شاشة الإعدادات والتحكم بالتطبيق
+// 11. شاشة الإعدادات
 // ============================================================================
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -1519,7 +1799,7 @@ class SettingsScreen extends StatelessWidget {
               Card(
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 child: ListTile(
-                  leading: const Icon(Icons.bookmark, color: Color(0xFFC5A059)),
+                  leading: const Icon(Icons.favorite, color: Colors.redAccent),
                   title: const Text('السور المحفوظة في المفضلة', style: TextStyle(fontWeight: FontWeight.bold)),
                   trailing: Text('${appEngine.bookmarkedSurahs.length} سورة'),
                 ),
@@ -1530,7 +1810,7 @@ class SettingsScreen extends StatelessWidget {
                 child: const ListTile(
                   leading: Icon(Icons.info_outline, color: Color(0xFF0A4D3C)),
                   title: Text('عن تطبيق قرآني'),
-                  subtitle: Text('تطبيق إسلامي شامل صدقة جارية - الإصدار 2.0 المطور'),
+                  subtitle: Text('تطبيق إسلامي شامل صدقة جارية - الإصدار 3.0 المطور'),
                 ),
               ),
             ],
@@ -1542,7 +1822,7 @@ class SettingsScreen extends StatelessWidget {
 }
 
 // ============================================================================
-// 11. قاعدة بيانات كبار القراء (32 قارئاً بروايات مختلفة)
+// 12. قاعدة بيانات كبار القراء (32 قارئاً بروايات مختلفة)
 // ============================================================================
 final List<ReciterData> allReciters = [
   const ReciterData(id: "afs", name: "مشاري راشد العفاسي", riwayah: "حفص عن عاصم", server: "https://server8.mp3quran.net/afs"),
@@ -1580,7 +1860,7 @@ final List<ReciterData> allReciters = [
 ];
 
 // ============================================================================
-// 12. فهرس الـ 114 سورة كاملاً
+// 13. فهرس الـ 114 سورة كاملاً
 // ============================================================================
 final List<SurahData> surahsCatalog = [
   const SurahData(number: 1, name: "الفاتحة", englishName: "Al-Fatiha", type: "مكية", ayahsCount: 7, startPage: 1),
