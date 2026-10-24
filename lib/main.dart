@@ -258,7 +258,7 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
   Duration remainingTime = Duration.zero;
   Timer? ticker;
 
-  // ميزة موضع التوقف
+  // موضع التوقف
   int? stopPositionSurahNumber;
   String? stopPositionSurahName;
   int? stopPositionPage;
@@ -280,7 +280,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     isDark = prefs.getBool('isDark') ?? false;
     fontSize = prefs.getDouble('fontSize') ?? 24.0;
 
-    // استرجاع موضع التوقف
     stopPositionSurahNumber = prefs.getInt('stop_surah_num');
     stopPositionSurahName = prefs.getString('stop_surah_name');
     stopPositionPage = prefs.getInt('stop_surah_page');
@@ -329,7 +328,13 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  // --- تشغيل الصوتيات مع نظام الحماية من أخطاء الروابط ---
+  // تبديل القارئ مع التحديث الفوري المباشر
+  void selectReciter(int index) {
+    currentReciterIndex = index;
+    notifyListeners();
+    playSurah(currentSurahIndex, reciterIdx: index);
+  }
+
   Future<void> playSurah(int surahIdx, {int? reciterIdx, bool forceOnline = false}) async {
     if (reciterIdx != null) currentReciterIndex = reciterIdx;
     currentSurahIndex = surahIdx;
@@ -368,7 +373,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
         try {
           await player.setAudioSource(AudioSource.uri(Uri.parse(remoteUrl), tag: mediaItem));
         } catch (_) {
-          // خطة بديلة سريعة لتشغيل الرابط مباشرة بدون وسائط شاشة القفل إذا تعذر ذلك
           await player.setUrl(remoteUrl);
         }
       }
@@ -431,7 +435,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  // --- تحميل السور الصوتية ---
   Future<void> downloadSurahAudio(SurahData surah, ReciterData reciter) async {
     final numPad = surah.number.toString().padLeft(3, '0');
     final remoteUrl = "${reciter.server}/$numPad.mp3";
@@ -496,7 +499,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     return downloadedList.any((d) => d.surahNumber == surahNum && d.reciterName == reciterName);
   }
 
-  // --- ميزة حفظ وإلغاء موضع التوقف ---
   void setStopPosition(SurahData surah) {
     stopPositionSurahNumber = surah.number;
     stopPositionSurahName = surah.name;
@@ -523,7 +525,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     return stopPositionSurahNumber == surahNumber;
   }
 
-  // --- خطط الحفظ ---
   void createNewHifzPlan(String title, int targetPages, int daily) {
     hifzPlans.add(HifzPlan(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -554,7 +555,6 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  // --- مواقيت الصلاة والمؤقت الحي ---
   void _initPrayerTimesFast() {
     _calculatePrayer(Coordinates(21.4225, 39.8262));
   }
@@ -684,7 +684,7 @@ class AppEngine extends ChangeNotifier with WidgetsBindingObserver {
 late AppEngine appEngine;
 
 // ============================================================================
-// 4. التطبيق الرئيسي والهوية البصرية مع إصلاح شريط الحالة العلوي
+// 4. التطبيق الرئيسي والهوية البصرية
 // ============================================================================
 class QuraniUltimateMasterApp extends StatelessWidget {
   final SharedPreferences prefs;
@@ -700,7 +700,6 @@ class QuraniUltimateMasterApp extends StatelessWidget {
         const primaryColor = Color(0xFF0A4D3C);
         const goldColor = Color(0xFFC5A059);
 
-        // ضبط ألوان شريط الحالة العلوي بدقة ليتغير فورياً مع المظهر وبدون أي خط أسود
         SystemChrome.setSystemUIOverlayStyle(
           SystemUiOverlayStyle(
             statusBarColor: Colors.transparent,
@@ -768,14 +767,13 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
       body: IndexedStack(index: _idx, children: _screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _idx,
         onDestinationSelected: (i) => setState(() => _idx = i),
-        backgroundColor: theme.colorScheme.surface,
-        indicatorColor: theme.colorScheme.primary.withOpacity(0.15),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        indicatorColor: Theme.of(context).colorScheme.primary.withOpacity(0.15),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.menu_book_rounded), label: 'المصحف'),
           NavigationDestination(icon: Icon(Icons.headphones_rounded), label: 'التلاوات'),
@@ -790,7 +788,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
 }
 
 // ============================================================================
-// 5. الشاشة الرئيسية: المصحف، موضع التوقف، والمؤقت الحي
+// 5. الشاشة الرئيسية
 // ============================================================================
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -839,7 +837,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: CustomScrollView(
         slivers: [
-          // المؤقت الحي بدون أي تجمد
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
@@ -849,8 +846,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-
-          // بطاقة موضع التوقف المحفوظ مع إمكانية المتابعة أو الإلغاء فورياً
           SliverToBoxAdapter(
             child: AnimatedBuilder(
               animation: appEngine,
@@ -908,8 +903,6 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
-
-          // شريط البحث
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
@@ -925,8 +918,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-
-          // قائمة الـ 114 سورة
           SliverPadding(
             padding: const EdgeInsets.all(16),
             sliver: SliverList(
@@ -1030,7 +1021,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ============================================================================
-// 6. قارئ المصحف مع زر حفظ التوقف وزر الإلغاء
+// 6. قارئ المصحف الشريف (تم حل مشكلة تحميل الصور كلياً عبر سيرفرات سريعة ومستقرة)
 // ============================================================================
 class SurahReaderView extends StatefulWidget {
   final SurahData surah;
@@ -1054,8 +1045,10 @@ class _SurahReaderViewState extends State<SurahReaderView> with SingleTickerProv
     _fetchTextWithCache();
   }
 
+  // جلب صفحة المصحف وحفظها محلياً
   Future<void> _checkOfflineImage() async {
-    final pageNumStr = widget.surah.startPage.toString().padLeft(3, '0');
+    final pageNum = widget.surah.startPage;
+    final pageNumStr = pageNum.toString().padLeft(3, '0');
     final dir = await getApplicationDocumentsDirectory();
     final filePath = "${dir.path}/page_$pageNumStr.png";
     final file = File(filePath);
@@ -1063,14 +1056,25 @@ class _SurahReaderViewState extends State<SurahReaderView> with SingleTickerProv
     if (file.existsSync()) {
       if (mounted) setState(() => localImagePath = filePath);
     } else {
-      final remoteUrl = "https://raw.githubusercontent.com/Govar-Frman/Quran-Page-Images/main/pages/$pageNumStr.png";
+      // سيرفر عالي السرعة والموثوقية لمصحف المدينة المنورة
+      final remoteUrl = "https://everyayah.com/data/quranpngs/$pageNum.png";
       try {
         final res = await http.get(Uri.parse(remoteUrl)).timeout(const Duration(seconds: 10));
         if (res.statusCode == 200) {
           await file.writeAsBytes(res.bodyBytes);
           if (mounted) setState(() => localImagePath = filePath);
         }
-      } catch (_) {}
+      } catch (_) {
+        // سيرفر بديل في حال انقطاع الشبكة
+        try {
+          final backupUrl = "https://raw.githubusercontent.com/Govar-Frman/Quran-Page-Images/main/pages/$pageNumStr.png";
+          final res2 = await http.get(Uri.parse(backupUrl)).timeout(const Duration(seconds: 8));
+          if (res2.statusCode == 200) {
+            await file.writeAsBytes(res2.bodyBytes);
+            if (mounted) setState(() => localImagePath = filePath);
+          }
+        } catch (_) {}
+      }
     }
   }
 
@@ -1131,8 +1135,8 @@ class _SurahReaderViewState extends State<SurahReaderView> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    final pageNumStr = widget.surah.startPage.toString().padLeft(3, '0');
-    final remoteUrl = "https://raw.githubusercontent.com/Govar-Frman/Quran-Page-Images/main/pages/$pageNumStr.png";
+    final pageNum = widget.surah.startPage;
+    final primaryImgUrl = "https://everyayah.com/data/quranpngs/$pageNum.png";
 
     return Scaffold(
       appBar: AppBar(
@@ -1179,11 +1183,20 @@ class _SurahReaderViewState extends State<SurahReaderView> with SingleTickerProv
               child: localImagePath != null
                   ? Image.file(File(localImagePath!), fit: BoxFit.contain)
                   : Image.network(
-                      remoteUrl,
+                      primaryImgUrl,
                       fit: BoxFit.contain,
                       loadingBuilder: (ctx, child, progress) {
                         if (progress == null) return child;
-                        return const Center(child: CircularProgressIndicator(color: Color(0xFF0A4D3C)));
+                        return const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              CircularProgressIndicator(color: Color(0xFF0A4D3C)),
+                              SizedBox(height: 12),
+                              Text("جاري عرض وحفظ صفحة المصحف الشريف..."),
+                            ],
+                          ),
+                        );
                       },
                       errorBuilder: (_, __, ___) => const Center(
                         child: Text("تعذر تحميل صورة المصحف، تأكد من الاتصال بالإنترنت لحفظها."),
@@ -1246,122 +1259,127 @@ class _AudioStudioScreenState extends State<AudioStudioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final curReciter = allReciters[appEngine.currentReciterIndex];
+    return AnimatedBuilder(
+      animation: appEngine,
+      builder: (context, _) {
+        final curReciter = allReciters[appEngine.currentReciterIndex];
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('المصحف الصوتي المرتل', style: TextStyle(fontWeight: FontWeight.bold))),
-      body: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            margin: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFF0A4D3C), Color(0xFF155C48)]),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  appEngine.currentPlayingTitle.isEmpty ? "اختر سورة للتلاوة" : appEngine.currentPlayingTitle,
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
+        return Scaffold(
+          appBar: AppBar(title: const Text('المصحف الصوتي المرتل', style: TextStyle(fontWeight: FontWeight.bold))),
+          body: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                margin: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Color(0xFF0A4D3C), Color(0xFF155C48)]),
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                const SizedBox(height: 4),
-                if (appEngine.isPlayingOffline)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(color: const Color(0xFFC5A059), borderRadius: BorderRadius.circular(8)),
-                    child: const Text("تشغيل بدون إنترنت (أوفلاين)", style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)),
-                  ),
-                Slider(
-                  value: appEngine.position.inSeconds.toDouble().clamp(0.0, (appEngine.duration.inSeconds > 0) ? appEngine.duration.inSeconds.toDouble() : 1.0),
-                  max: (appEngine.duration.inSeconds > 0) ? appEngine.duration.inSeconds.toDouble() : 1.0,
-                  activeColor: const Color(0xFFC5A059),
-                  inactiveColor: Colors.white24,
-                  onChanged: (v) => appEngine.player.seek(Duration(seconds: v.toInt())),
+                child: Column(
+                  children: [
+                    Text(
+                      appEngine.currentPlayingTitle.isEmpty ? "اختر سورة للتلاوة" : appEngine.currentPlayingTitle,
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    if (appEngine.isPlayingOffline)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(color: const Color(0xFFC5A059), borderRadius: BorderRadius.circular(8)),
+                        child: const Text("تشغيل بدون إنترنت (أوفلاين)", style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)),
+                      ),
+                    Slider(
+                      value: appEngine.position.inSeconds.toDouble().clamp(0.0, (appEngine.duration.inSeconds > 0) ? appEngine.duration.inSeconds.toDouble() : 1.0),
+                      max: (appEngine.duration.inSeconds > 0) ? appEngine.duration.inSeconds.toDouble() : 1.0,
+                      activeColor: const Color(0xFFC5A059),
+                      inactiveColor: Colors.white24,
+                      onChanged: (v) => appEngine.player.seek(Duration(seconds: v.toInt())),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(_format(appEngine.position), style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                        Text(_format(appEngine.duration), style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                      ],
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(icon: const Icon(Icons.skip_previous, color: Colors.white, size: 30), onPressed: () => appEngine.playPrevSurah()),
+                        const SizedBox(width: 20),
+                        InkWell(
+                          onTap: () => appEngine.togglePlay(),
+                          customBorder: const CircleBorder(),
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFFC5A059)),
+                            child: appEngine.isAudioBuffering
+                                ? const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : Icon(appEngine.player.playing ? Icons.pause : Icons.play_arrow, color: Colors.white, size: 30),
+                          ),
+                        ),
+                        const SizedBox(width: 20),
+                        IconButton(icon: const Icon(Icons.skip_next, color: Colors.white, size: 30), onPressed: () => appEngine.playNextSurah()),
+                      ],
+                    ),
+                  ],
                 ),
-                Row(
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(_format(appEngine.position), style: const TextStyle(color: Colors.white70, fontSize: 11)),
-                    Text(_format(appEngine.duration), style: const TextStyle(color: Colors.white70, fontSize: 11)),
-                  ],
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(icon: const Icon(Icons.skip_previous, color: Colors.white, size: 30), onPressed: () => appEngine.playPrevSurah()),
-                    const SizedBox(width: 20),
-                    InkWell(
-                      onTap: () => appEngine.togglePlay(),
-                      customBorder: const CircleBorder(),
-                      child: Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFFC5A059)),
-                        child: appEngine.isAudioBuffering
-                            ? const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : Icon(appEngine.player.playing ? Icons.pause : Icons.play_arrow, color: Colors.white, size: 30),
-                      ),
+                    Text("القارئ: ${curReciter.name}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    TextButton.icon(
+                      onPressed: () => _showRecitersModal(),
+                      icon: const Icon(Icons.person, color: Color(0xFFC5A059)),
+                      label: const Text('تغيير (30+)', style: TextStyle(color: Color(0xFFC5A059))),
                     ),
-                    const SizedBox(width: 20),
-                    IconButton(icon: const Icon(Icons.skip_next, color: Colors.white, size: 30), onPressed: () => appEngine.playNextSurah()),
                   ],
                 ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text("القارئ: ${curReciter.name}", style: const TextStyle(fontWeight: FontWeight.bold)),
-                TextButton.icon(
-                  onPressed: () => _showRecitersModal(),
-                  icon: const Icon(Icons.person, color: Color(0xFFC5A059)),
-                  label: const Text('تغيير (30+)', style: TextStyle(color: Color(0xFFC5A059))),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: surahsCatalog.length,
-              itemBuilder: (ctx, i) {
-                final s = surahsCatalog[i];
-                final isCurrent = i == appEngine.currentSurahIndex;
-                final isDownloaded = appEngine.isSurahDownloaded(s.number, curReciter.name);
-                final prog = appEngine.downloadProgress[s.number];
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: surahsCatalog.length,
+                  itemBuilder: (ctx, i) {
+                    final s = surahsCatalog[i];
+                    final isCurrent = i == appEngine.currentSurahIndex;
+                    final isDownloaded = appEngine.isSurahDownloaded(s.number, curReciter.name);
+                    final prog = appEngine.downloadProgress[s.number];
 
-                return ListTile(
-                  leading: Icon(
-                    isCurrent && appEngine.player.playing ? Icons.graphic_eq : Icons.play_circle_outline,
-                    color: isCurrent ? const Color(0xFF0A4D3C) : Colors.grey,
-                  ),
-                  title: Text(s.name, style: TextStyle(fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal)),
-                  subtitle: Text("${s.type} • ${s.ayahsCount} آية"),
-                  trailing: prog != null
-                      ? SizedBox(width: 32, height: 32, child: CircularProgressIndicator(value: prog, color: const Color(0xFFC5A059)))
-                      : IconButton(
-                          icon: Icon(
-                            isDownloaded ? Icons.download_done : Icons.download_for_offline_outlined,
-                            color: isDownloaded ? const Color(0xFF0A4D3C) : const Color(0xFFC5A059),
-                          ),
-                          tooltip: isDownloaded ? 'محملة مسبقاً' : 'تحميل للاستماع بدون إنترنت',
-                          onPressed: () {
-                            if (!isDownloaded) {
-                              appEngine.downloadSurahAudio(s, curReciter);
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('بدأ تحميل سورة ${s.name} بصوت ${curReciter.name}...')));
-                            }
-                          },
-                        ),
-                  onTap: () => appEngine.playSurah(i),
-                );
-              },
-            ),
+                    return ListTile(
+                      leading: Icon(
+                        isCurrent && appEngine.player.playing ? Icons.graphic_eq : Icons.play_circle_outline,
+                        color: isCurrent ? const Color(0xFF0A4D3C) : Colors.grey,
+                      ),
+                      title: Text(s.name, style: TextStyle(fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal)),
+                      subtitle: Text("${s.type} • ${s.ayahsCount} آية"),
+                      trailing: prog != null
+                          ? SizedBox(width: 32, height: 32, child: CircularProgressIndicator(value: prog, color: const Color(0xFFC5A059)))
+                          : IconButton(
+                              icon: Icon(
+                                isDownloaded ? Icons.download_done : Icons.download_for_offline_outlined,
+                                color: isDownloaded ? const Color(0xFF0A4D3C) : const Color(0xFFC5A059),
+                              ),
+                              tooltip: isDownloaded ? 'محملة مسبقاً' : 'تحميل للاستماع بدون إنترنت',
+                              onPressed: () {
+                                if (!isDownloaded) {
+                                  appEngine.downloadSurahAudio(s, curReciter);
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('بدأ تحميل سورة ${s.name} بصوت ${curReciter.name}...')));
+                                }
+                              },
+                            ),
+                      onTap: () => appEngine.playSurah(i),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1389,12 +1407,15 @@ class _AudioStudioScreenState extends State<AudioStudioScreen> {
                     itemBuilder: (ctx, idx) {
                       final r = fil[idx];
                       final orig = allReciters.indexOf(r);
+                      final isSelected = orig == appEngine.currentReciterIndex;
+
                       return ListTile(
-                        title: Text(r.name),
+                        title: Text(r.name, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
                         subtitle: Text(r.riwayah),
-                        trailing: orig == appEngine.currentReciterIndex ? const Icon(Icons.check, color: Color(0xFFC5A059)) : null,
+                        trailing: isSelected ? const Icon(Icons.check_circle, color: Color(0xFFC5A059)) : null,
                         onTap: () {
-                          appEngine.playSurah(appEngine.currentSurahIndex, reciterIdx: orig);
+                          // استدعاء دالة التغيير المباشر
+                          appEngine.selectReciter(orig);
                           Navigator.pop(ctx);
                         },
                       );
@@ -1411,7 +1432,7 @@ class _AudioStudioScreenState extends State<AudioStudioScreen> {
 }
 
 // ============================================================================
-// 8. قسم التنزيلات الصوتية الأوفلاين (شامل لحجم الملف وإدارته)
+// 8. قسم التنزيلات الصوتية الأوفلاين
 // ============================================================================
 class DownloadsScreen extends StatelessWidget {
   const DownloadsScreen({super.key});
